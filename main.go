@@ -1,20 +1,79 @@
 package main
 
 import (
-	"fmt"
+	"encoding/json"
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/rs/cors"
 )
 
-//TIP <p>To run your code, right-click the code and select <b>Run</b>.</p> <p>Alternatively, click
-// the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.</p>
-func main() {
-	//TIP <p>Press <shortcut actionId="ShowIntentionActions"/> when your caret is at the underlined text
-	// to see how GoLand suggests fixing the warning.</p><p>Alternatively, if available, click the lightbulb to view possible fixes.</p>
-	s := "gopher"
-	fmt.Println("Hello and welcome, %s!", s)
-
-	for i := 1; i <= 5; i++ {
-		//TIP <p>To start your debugging session, right-click your code in the editor and select the Debug option.</p> <p>We have set one <icon src="AllIcons.Debugger.Db_set_breakpoint"/> breakpoint
-		// for you, but you can always add more by pressing <shortcut actionId="ToggleLineBreakpoint"/>.</p>
-		fmt.Println("i =", 100/i)
+func init() {
+	err := ConnectDB()
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
 	}
+}
+func main() {
+	router := http.NewServeMux()
+
+	router.HandleFunc("GET /api/healthchecker", HealthCheckerHandler)
+	router.HandleFunc("PATCH /api/notes/{noteId}", UpdateNote)
+	router.HandleFunc("GET /api/notes/{noteId}", FindNoteById)
+	router.HandleFunc("DELETE /api/notes/{noteId}", DeleteNote)
+	router.HandleFunc("POST /api/notes", CreateNoteHandler)
+	router.HandleFunc("GET /api/notes", FindNotes)
+
+	//Custom CORS configuration
+	corsConfig := cors.New(cors.Options{
+		AllowedHeaders:   []string{"Origin", "Authorization", "Accept", "Content-Type"},
+		AllowedOrigins:   []string{"http://localhost:3000"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE"},
+		AllowCredentials: true,
+	})
+	//wrap the router with the logRequest middleware
+	loggedRouter := logReuests(router)
+
+	//Create a new CORS handler
+	corsHandler := corsConfig.Handler(loggedRouter)
+
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: loggedRouter,
+	}
+	log.Println("Starting server on port 8080")
+	if err := server.ListenAndServe(); err != nil {
+		log.Fatalf("Server Error: %v", err)
+	}
+
+}
+
+type wrappedWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (w *wrappedWriter) WriteHeader(statusCode int) {
+	w.ResponseWriter.WriteHeader(statusCode)
+	w.statusCode = statusCode
+}
+func logReuests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
+		wrapped := &wrappedWriter{w, http.StatusOK}
+		next.ServeHTTP(wrapped, r)
+
+		elapsed := time.Since(start)
+		log.Printf("Received request: %d %s %s", wrapped.statusCode, r.Method, r.URL.Path, elapsed)
+	})
+}
+func HealthCheckerHandler(w http.ResponseWriter, r *http.Request) {
+	response := map[string]string{
+		"status":  "success",
+		"message": "Welcome to the health checker",
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
